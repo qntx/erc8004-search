@@ -49,7 +49,7 @@ pub use error::{Error, Result};
 pub use types::{
     ApiFeatures, ApiLimits, CapabilitiesResponse, ErrorResponse, Filters, HealthResponse,
     PaginationMeta, Protocol, ProviderInfo, ResultMetadata, SearchRequest, SearchResponse,
-    SearchResultItem, ServiceHealth, TrustModel,
+    SearchResultItem, ServiceHealth, TrustModel, WalletFilter,
 };
 
 // Re-export x402 payment types for convenience.

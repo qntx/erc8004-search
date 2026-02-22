@@ -115,6 +115,30 @@ impl fmt::Display for TrustModel {
     }
 }
 
+/// Wallet filter mode for reputation score re-aggregation.
+///
+/// Controls which wallet feedback is included when computing the
+/// `reputationScore` returned in search results.
+///
+/// # Example
+///
+/// ```
+/// use erc8004_search::{SearchRequest, WalletFilter};
+///
+/// let req = SearchRequest::new("DeFi agent")
+///     .wallet_filter(WalletFilter::Exclude(vec!["0xdead...".into()]));
+/// ```
+#[derive(Debug, Clone, Default)]
+pub enum WalletFilter {
+    /// No wallet filtering (default). All feedback is included.
+    #[default]
+    Off,
+    /// Exclude these wallets from reputation re-aggregation.
+    Exclude(Vec<String>),
+    /// Only include these wallets in reputation re-aggregation.
+    Include(Vec<String>),
+}
+
 /// `POST /api/v1/search` request body.
 ///
 /// # Example
@@ -227,19 +251,38 @@ impl SearchRequest {
         self
     }
 
-    /// Set wallet addresses to exclude from reputation re-aggregation.
+    /// Set the reputation wallet filter mode.
+    ///
+    /// Controls which wallet feedback is included when computing the
+    /// `reputationScore` returned in search results.
+    ///
+    /// ```
+    /// use erc8004_search::{SearchRequest, WalletFilter};
+    ///
+    /// // Exclude specific wallets from reputation calculation.
+    /// let req = SearchRequest::new("DeFi agent")
+    ///     .wallet_filter(WalletFilter::Exclude(vec!["0xdead...".into()]));
+    ///
+    /// // Only include specific wallets.
+    /// let req = SearchRequest::new("DeFi agent")
+    ///     .wallet_filter(WalletFilter::Include(vec!["0xbeef...".into()]));
+    /// ```
     #[must_use]
-    pub fn exclude_wallets(mut self, wallets: Vec<String>) -> Self {
-        self.reputation_exclude_wallets = Some(wallets);
-        self.reputation_include_wallets = None;
-        self
-    }
-
-    /// Set wallet addresses to exclusively include in reputation re-aggregation.
-    #[must_use]
-    pub fn include_wallets(mut self, wallets: Vec<String>) -> Self {
-        self.reputation_include_wallets = Some(wallets);
-        self.reputation_exclude_wallets = None;
+    pub fn wallet_filter(mut self, filter: WalletFilter) -> Self {
+        match filter {
+            WalletFilter::Off => {
+                self.reputation_exclude_wallets = None;
+                self.reputation_include_wallets = None;
+            }
+            WalletFilter::Exclude(wallets) => {
+                self.reputation_exclude_wallets = Some(wallets);
+                self.reputation_include_wallets = None;
+            }
+            WalletFilter::Include(wallets) => {
+                self.reputation_include_wallets = Some(wallets);
+                self.reputation_exclude_wallets = None;
+            }
+        }
         self
     }
 }
@@ -853,11 +896,20 @@ mod tests {
     }
 
     #[test]
-    fn exclude_wallets_clears_include() {
+    fn wallet_filter_exclude_clears_include() {
         let req = SearchRequest::new("test")
-            .include_wallets(vec!["0xabc".into()])
-            .exclude_wallets(vec!["0xdef".into()]);
+            .wallet_filter(WalletFilter::Include(vec!["0xabc".into()]))
+            .wallet_filter(WalletFilter::Exclude(vec!["0xdef".into()]));
         assert!(req.reputation_include_wallets.is_none());
         assert!(req.reputation_exclude_wallets.is_some());
+    }
+
+    #[test]
+    fn wallet_filter_off_clears_both() {
+        let req = SearchRequest::new("test")
+            .wallet_filter(WalletFilter::Exclude(vec!["0xabc".into()]))
+            .wallet_filter(WalletFilter::Off);
+        assert!(req.reputation_exclude_wallets.is_none());
+        assert!(req.reputation_include_wallets.is_none());
     }
 }

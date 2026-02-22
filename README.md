@@ -8,7 +8,7 @@
 [![Documentation](https://docs.rs/erc8004-search/badge.svg)](https://docs.rs/erc8004-search)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](#license)
 
-Discover on-chain AI agents through semantic search — with zero configuration and built-in [x402](https://www.x402.org/) micropayment support.
+Discover on-chain AI agents through semantic search — with built-in [x402](https://www.x402.org/) micropayment support.
 
 </div>
 
@@ -16,20 +16,21 @@ Discover on-chain AI agents through semantic search — with zero configuration 
 
 ## Highlights
 
-- **Zero-config default** — Ships with a built-in hosted endpoint (`https://search.qntx.fun`); start querying in two lines of code.
-- **x402 payment middleware** — Automatic EVM (EIP-155) and Solana payment signing when the service requires micropayments.
-- **Typed & ergonomic API** — Strongly-typed request/response models matching the [ERC-8004 v1 spec](https://github.com/qntx/erc8004-search-service/blob/main/docs/SEMANTIC_SEARCH_STANDARD_V1.md), with builder patterns and cursor pagination.
+- **Built-in endpoint** — Defaults to the QNTX-hosted service (`https://search.qntx.fun`) with x402 micropayments.
+- **x402 payment middleware** — Automatic EVM (EIP-155) and Solana payment signing via [`r402`](https://github.com/qntx/r402).
+- **Type-safe filters** — `Protocol`, `TrustModel`, and `WalletFilter` enums prevent typos and provide IDE autocompletion.
+- **Flexible payment control** — Pluggable `PaymentSelector` (`FirstMatch`, `PreferChain`, `MaxAmount`) and `PaymentPolicy` support.
 - **Production-ready** — Connection pooling, configurable timeouts, structured error handling, and `tracing` instrumentation.
 
 ## Installation
-
-Add to your `Cargo.toml`:
 
 ```sh
 cargo add erc8004-search
 ```
 
 ## Quick Start
+
+The QNTX-hosted service uses x402 micropayments, so an EVM signer is required:
 
 ```rust
 use erc8004_search::SearchClient;
@@ -50,18 +51,14 @@ async fn main() -> erc8004_search::Result<()> {
 }
 ```
 
-For custom endpoints, chain `.base_url("https://...")` on the builder.
+For self-hosted endpoints, chain `.base_url("https://...")` on the builder.
 
-## Advanced Usage
+## Filtered Search
 
-### Filtered Search
-
-Use the structured `Filters` builder to narrow results by on-chain metadata:
+Use type-safe enums to narrow results by on-chain metadata:
 
 ```rust
-use erc8004_search::{SearchClient, SearchRequest, Filters, Protocol};
-
-let client = SearchClient::new();
+use erc8004_search::{Filters, Protocol, TrustModel, SearchRequest};
 
 let request = SearchRequest::new("MCP tool server")
     .limit(5)
@@ -70,23 +67,79 @@ let request = SearchRequest::new("MCP tool server")
         Filters::new()
             .chain_id(8453)
             .active(true)
+            .x402_support(true)
             .protocols([Protocol::Mcp, Protocol::A2a])
+            .trust_models([TrustModel::Reputation])
     );
-
-let resp = client.execute(request).await?;
 ```
 
-### Cursor Pagination
+### Available Filter Methods
 
-Automatically walk through all pages of results:
+| Method                   | Field            | Description                         |
+|--------------------------|------------------|-------------------------------------|
+| `.chain_id(i64)`         | `chainId`        | Exact chain ID                      |
+| `.chain_id_in([...])`    | `chainId`        | Match any chain ID                  |
+| `.active(bool)`          | `active`         | Agent active status                 |
+| `.x402_support(bool)`    | `x402Support`    | x402 payment support                |
+| `.protocols([...])`      | `serviceName`    | Service protocols (`Protocol` enum) |
+| `.trust_models([...])`   | `supportedTrust` | Trust models (`TrustModel` enum)    |
+| `.agent_id(str)`         | `agentId`        | Exact agent ID                      |
+| `.name_eq(str)`          | `name`           | Exact agent name                    |
+
+Low-level `.eq()` / `.r#in()` / `.not_in()` / `.exists()` / `.not_exists()` methods are available for custom fields.
+
+### Protocol Enum
+
+`Mcp` · `A2a` · `Oasf` · `Ens` · `Did` · `Web` · `Email`
+
+### TrustModel Enum
+
+`Reputation` · `CryptoEconomic` · `TeeAttestation`
+
+## Reputation Wallet Filter
+
+Control which wallet feedback is included in reputation score calculation:
 
 ```rust
-// Collect up to 10 pages of results in a single call.
+use erc8004_search::{SearchRequest, WalletFilter};
+
+let req = SearchRequest::new("DeFi agent")
+    .wallet_filter(WalletFilter::Exclude(vec!["0xdead...".into()]));
+
+let req = SearchRequest::new("DeFi agent")
+    .wallet_filter(WalletFilter::Include(vec!["0xbeef...".into()]));
+```
+
+## Payment Configuration
+
+### Custom Payment Selector
+
+```rust
+use erc8004_search::{SearchClient, PreferChain};
+use r402::chain::ChainIdPattern;
+
+let client = SearchClient::builder()
+    .evm_signer(signer)
+    .payment_selector(PreferChain::new([ChainIdPattern::exact(8453)]))
+    .build()?;
+```
+
+### Available Selectors
+
+| Selector      | Description                              |
+|---------------|------------------------------------------|
+| `FirstMatch`  | First compatible scheme (default)        |
+| `PreferChain` | Prefer specific chains in priority order |
+| `MaxAmount`   | Reject payments above a ceiling          |
+
+## Cursor Pagination
+
+```rust
 let all_results = client.search_all("blockchain agent", 10).await?;
 println!("Total results: {}", all_results.len());
 ```
 
-### Health & Capabilities
+## Health & Capabilities
 
 ```rust
 let health = client.health().await?;
@@ -96,12 +149,13 @@ let caps = client.capabilities().await?;
 println!("Max query length: {}", caps.limits.max_query_length);
 ```
 
-### Custom HTTP Settings
+## Custom HTTP Settings
 
 ```rust
 use std::time::Duration;
 
 let client = SearchClient::builder()
+    .evm_signer(signer)
     .timeout(Duration::from_secs(30))
     .user_agent("my-app/1.0")
     .build()?;
@@ -118,22 +172,17 @@ Enable Solana support:
 
 ```toml
 [dependencies]
-erc8004-search = { version = "0.2", features = ["evm", "solana"] }
+erc8004-search = { version = "0.3", features = ["evm", "solana"] }
 ```
 
 ## Examples
 
-The `examples/` directory contains runnable demos:
-
 ```sh
-# Basic search (uses built-in endpoint by default)
+# Basic search
 PRIVATE_KEY="0x..." cargo run --example search
 
 # Filtered search with pagination
 PRIVATE_KEY="0x..." cargo run --example search_filters
-
-# Override with a custom endpoint
-PRIVATE_KEY="0x..." SEARCH_URL="https://your-server.com" cargo run --example search
 ```
 
 ## License
