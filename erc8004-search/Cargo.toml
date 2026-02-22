@@ -6,7 +6,44 @@ license.workspace = true
 repository.workspace = true
 description.workspace = true
 
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = ["evm"]
+evm = ["dep:r402-evm"]
+solana = ["dep:r402-svm"]
+
 [dependencies]
+r402 = { workspace = true }
+r402-http = { workspace = true }
+reqwest = { workspace = true }
+reqwest-middleware = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+
+# Optional payment scheme clients
+r402-evm = { workspace = true, optional = true }
+r402-svm = { workspace = true, optional = true }
+
+[dev-dependencies]
+alloy-signer-local = { workspace = true }
+tokio = { workspace = true }
+wiremock = { workspace = true }
+serde_json = { workspace = true }
+
+[[example]]
+name = "search"
+path = "examples/search.rs"
+required-features = ["evm"]
+
+[[example]]
+name = "search_filters"
+path = "examples/search_filters.rs"
+required-features = ["evm"]
 
 [lints]
 workspace = true
