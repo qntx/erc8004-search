@@ -2,6 +2,10 @@
 //!
 //! [`SearchClient`] wraps `reqwest` with automatic x402 payment handling
 //! via [`r402_http::client::X402Client`] middleware.
+//!
+//! The SDK defaults to the QNTX-hosted endpoint ([`DEFAULT_BASE_URL`]),
+//! so callers can start querying with zero configuration. Override via
+//! [`SearchClientBuilder::base_url`] when self-hosting.
 
 use reqwest::Client;
 use reqwest_middleware::ClientWithMiddleware;
@@ -10,6 +14,12 @@ use url::Url;
 use crate::error::{Error, Result};
 use crate::types::{CapabilitiesResponse, HealthResponse, SearchRequest, SearchResponse};
 
+/// Built-in default base URL for the QNTX-hosted ERC-8004 search service.
+///
+/// Used by [`SearchClient::new`] and [`SearchClient::builder`] unless
+/// overridden with [`SearchClientBuilder::base_url`].
+pub const DEFAULT_BASE_URL: &str = "https://search.qntx.fun";
+
 /// HTTP client for the ERC-8004 Semantic Search Service.
 ///
 /// Handles request construction, JSON serialization, error mapping,
@@ -17,8 +27,10 @@ use crate::types::{CapabilitiesResponse, HealthResponse, SearchRequest, SearchRe
 ///
 /// # Construction
 ///
-/// - [`SearchClient::new`] -- Minimal client without payment (for free/bypassed endpoints).
-/// - [`SearchClient::builder`] -- Fluent builder for attaching x402 signers and custom HTTP settings.
+/// | Method                      | Use case                                  |
+/// |-----------------------------|-------------------------------------------|
+/// | [`SearchClient::new`]       | Quick start, no payment, default endpoint |
+/// | [`SearchClient::builder`]   | Payment, custom URL, timeouts, etc.       |
 ///
 /// # Example
 ///
@@ -26,12 +38,11 @@ use crate::types::{CapabilitiesResponse, HealthResponse, SearchRequest, SearchRe
 /// use erc8004_search::{SearchClient, SearchRequest, Filters};
 /// use serde_json::json;
 ///
-/// let client = SearchClient::new("https://search.example.com")?;
-///
-/// // Simple search
+/// // Zero-config — uses the built-in QNTX endpoint.
+/// let client = SearchClient::new();
 /// let resp = client.search("DeFi lending").await?;
 ///
-/// // Filtered search with builder
+/// // Fully configured via builder.
 /// let req = SearchRequest::new("MCP tool server")
 ///     .limit(5)
 ///     .min_score(0.5)
@@ -45,20 +56,26 @@ pub struct SearchClient {
 }
 
 impl SearchClient {
-    /// Create a new client without x402 payment middleware.
+    /// Create a client targeting the built-in QNTX endpoint
+    /// ([`DEFAULT_BASE_URL`]) without x402 payment middleware.
     ///
-    /// Suitable for services with `payment.bypass = true` or free endpoints.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Config`] if `base_url` is not a valid URL.
-    pub fn new(base_url: impl AsRef<str>) -> Result<Self> {
-        SearchClientBuilder::new(base_url).build()
+    /// This is the fastest way to start querying.
+    /// For payment or custom endpoints, use [`SearchClient::builder`].
+    #[must_use]
+    pub fn new() -> Self {
+        SearchClientBuilder::default()
+            .build()
+            .expect("built-in DEFAULT_BASE_URL is always valid")
     }
 
-    /// Create a builder for advanced configuration.
-    pub fn builder(base_url: impl AsRef<str>) -> SearchClientBuilder {
-        SearchClientBuilder::new(base_url)
+    /// Create a [`SearchClientBuilder`] pre-configured with the built-in
+    /// QNTX endpoint ([`DEFAULT_BASE_URL`]).
+    ///
+    /// Use this to attach x402 signers, set timeouts, or override the
+    /// base URL via [`SearchClientBuilder::base_url`].
+    #[must_use]
+    pub fn builder() -> SearchClientBuilder {
+        SearchClientBuilder::default()
     }
 
     /// `GET /api/v1/health` -- Check service health.
@@ -196,6 +213,8 @@ impl SearchClient {
 /// Builder for constructing a [`SearchClient`] with x402 payment and custom
 /// HTTP settings.
 ///
+/// Defaults to [`DEFAULT_BASE_URL`]. Override with [`base_url`](Self::base_url).
+///
 /// # Example
 ///
 /// ```rust,ignore
@@ -203,7 +222,15 @@ impl SearchClient {
 /// use alloy_signer_local::PrivateKeySigner;
 ///
 /// let signer: PrivateKeySigner = "0x...".parse()?;
-/// let client = SearchClient::builder("https://search.example.com")
+///
+/// // Default endpoint + payment.
+/// let client = SearchClient::builder()
+///     .evm_signer(signer)
+///     .build()?;
+///
+/// // Custom endpoint + payment + timeout.
+/// let client = SearchClient::builder()
+///     .base_url("https://custom.example.com")
 ///     .evm_signer(signer)
 ///     .timeout(std::time::Duration::from_secs(60))
 ///     .build()?;
@@ -216,17 +243,27 @@ pub struct SearchClientBuilder {
     has_payment: bool,
 }
 
-impl SearchClientBuilder {
-    /// Create a new builder.
-    fn new(base_url: impl AsRef<str>) -> Self {
+impl Default for SearchClientBuilder {
+    fn default() -> Self {
         Self {
-            base_url: base_url.as_ref().to_owned(),
+            base_url: DEFAULT_BASE_URL.to_owned(),
             reqwest_builder: Client::builder()
                 .pool_max_idle_per_host(4)
                 .tcp_keepalive(std::time::Duration::from_secs(30)),
             x402: r402_http::client::X402Client::new(),
             has_payment: false,
         }
+    }
+}
+
+impl SearchClientBuilder {
+    /// Override the base URL (default: [`DEFAULT_BASE_URL`]).
+    ///
+    /// Only needed when running your own ERC-8004 service instance.
+    #[must_use]
+    pub fn base_url(mut self, url: impl Into<String>) -> Self {
+        self.base_url = url.into();
+        self
     }
 
     /// Register an EVM signer for automatic x402 payment on EIP-155 chains.
@@ -240,7 +277,7 @@ impl SearchClientBuilder {
     /// use alloy_signer_local::PrivateKeySigner;
     ///
     /// let signer: PrivateKeySigner = "0x...".parse()?;
-    /// let client = SearchClient::builder("https://search.example.com")
+    /// let client = SearchClient::builder()
     ///     .evm_signer(signer)
     ///     .build()?;
     /// ```
@@ -324,22 +361,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builder_rejects_invalid_url() {
-        let result = SearchClient::new("not a url ://");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, Error::Config(_)));
+    fn new_uses_default_url() {
+        let client = SearchClient::new();
+        assert_eq!(
+            client.base_url.as_str().trim_end_matches('/'),
+            DEFAULT_BASE_URL
+        );
     }
 
     #[test]
-    fn builder_accepts_valid_url() {
-        let client = SearchClient::new("http://127.0.0.1:8080");
-        assert!(client.is_ok());
+    fn builder_uses_default_url() {
+        let client = SearchClient::builder().build().expect("valid");
+        assert_eq!(
+            client.base_url.as_str().trim_end_matches('/'),
+            DEFAULT_BASE_URL
+        );
+    }
+
+    #[test]
+    fn builder_base_url_override() {
+        let client = SearchClient::builder()
+            .base_url("http://127.0.0.1:9090")
+            .build()
+            .expect("valid");
+        assert_eq!(
+            client.url("/api/v1/search"),
+            "http://127.0.0.1:9090/api/v1/search"
+        );
+    }
+
+    #[test]
+    fn builder_rejects_invalid_url() {
+        let result = SearchClient::builder()
+            .base_url("not a url ://")
+            .build();
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::Config(_)));
     }
 
     #[test]
     fn url_construction() {
-        let client = SearchClient::new("http://localhost:8080").expect("valid url");
+        let client = SearchClient::builder()
+            .base_url("http://localhost:8080")
+            .build()
+            .expect("valid url");
         assert_eq!(
             client.url("/api/v1/search"),
             "http://localhost:8080/api/v1/search"
@@ -348,7 +413,10 @@ mod tests {
 
     #[test]
     fn url_strips_trailing_slash() {
-        let client = SearchClient::new("http://localhost:8080/").expect("valid url");
+        let client = SearchClient::builder()
+            .base_url("http://localhost:8080/")
+            .build()
+            .expect("valid url");
         assert_eq!(
             client.url("/api/v1/health"),
             "http://localhost:8080/api/v1/health"

@@ -5,12 +5,15 @@
 //! Provides a typed, ergonomic client for querying on-chain AI agent registrations
 //! via semantic search, with built-in [x402](https://www.x402.org/) payment support.
 //!
+//! The SDK ships with a built-in default endpoint (`https://search.qntx.fun`),
+//! so you can start querying immediately without any configuration.
+//!
 //! ## Quick Start
 //!
 //! ```rust,ignore
 //! use erc8004_search::SearchClient;
 //!
-//! let client = SearchClient::new("https://search.example.com")?;
+//! let client = SearchClient::new();
 //! let response = client.search("DeFi lending agent").await?;
 //!
 //! for result in &response.results {
@@ -20,16 +23,23 @@
 //!
 //! ## x402 Payment
 //!
-//! When the service requires payment, attach an EVM signer:
-//!
 //! ```rust,ignore
 //! use erc8004_search::SearchClient;
 //! use alloy_signer_local::PrivateKeySigner;
-//! use r402_evm::Eip155ExactClient;
 //!
 //! let signer: PrivateKeySigner = "0x...".parse()?;
-//! let client = SearchClient::builder("https://search.example.com")
+//! let client = SearchClient::builder()
 //!     .evm_signer(signer)
+//!     .build()?;
+//! ```
+//!
+//! ## Custom Endpoint
+//!
+//! ```rust,ignore
+//! use erc8004_search::SearchClient;
+//!
+//! let client = SearchClient::builder()
+//!     .base_url("https://custom.example.com")
 //!     .build()?;
 //! ```
 //!
@@ -42,7 +52,7 @@ mod client;
 mod error;
 mod types;
 
-pub use client::{SearchClient, SearchClientBuilder};
+pub use client::{SearchClient, SearchClientBuilder, DEFAULT_BASE_URL};
 pub use error::{Error, Result};
 pub use types::{
     ApiFeatures, ApiLimits, CapabilitiesResponse, ErrorResponse, Filters, HealthResponse,
